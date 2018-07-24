@@ -1,0 +1,1 @@
+This directory provides some good reading material to get you familirized with how genomic data can be used to address ecological questions and a couple papers about how these genomic data are generated for non-model organisms. 
