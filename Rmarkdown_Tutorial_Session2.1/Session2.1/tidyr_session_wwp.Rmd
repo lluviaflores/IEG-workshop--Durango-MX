@@ -1,0 +1,246 @@
+---
+title: "Tidyverse and Data Wrangling"
+author: "Jeremy Johnson"
+date: "August 1, 2018"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Reproducible Research using Rmarkdown and the Tidyverse
+*Some of the biggest challenges in reproducibility come from **miss-handling** data*
+This occurs when one or more people modify data, change file names share data that is then modified and analyzed in different ways without proper documentation. Eventually this leads to problems. One of the primary goals of reproducible research is that everyone uses the same data, and nobody modifies data in its native file format. All modification should be conducted in `R` or another environment with all metadata recorded. This is why `Rmarkdown` is so incredibly handy.
+
+Let's explore how this can be done using an unmodified **WWP** dataset. This data will be used in the afternoon session to conduct a Genome Wide Association Study (GWAS).
+
+## Learning Objectives
+* Understand the purpose of `dplyr` and `tidyr`
+* Clean an unmodified dataset using `select`, `filter`, `rename`
+* Link output from one `dplyr` function and another using "pipe" `%>%` operator
+* Create new columns from existing columns using `mutate`
+* Summarize data using `summarize`, `goup_by` and `count`
+* Plot and explore data using `ggplot2`
+* export a data frame to a .txt or .csv file
+
+
+First we will load the libraries that we need.
+
+```{r echo = TRUE, warning= FALSE}
+#data analysis libraries
+library(nlme)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(GGally)
+```
+
+### Import the *Pinus monticola* $\delta$^13^*C* data.
+
+
+The data you will be working with today is from seed bearing cones collected from parent trees ('families') spanning a portion of the range of *P. monticola*...**ADD INFO ON SEED COLLECTION AND PROJECT CONTEXT**
+
+Specifically the dataset consists of $\delta$^13^*C* measured on 779 seedlings. Environmental data for the populations was also obtained from **WHERE**
+
+
+```{r}
+wwp <- read.csv("WWP_phenotype_data_jsj.csv", header = TRUE)
+```
+
+Now that we have the data imported into the `R` environment, it's always good practice to check the data using `str()`, `head()`, and `summary()` 
+
+Even though we have loaded all of our data, it appears that not all of the data is represented in the best possible way. This includes blanks, odd characters, miss-entered data etc..
+
+### Tidy the data
+
+Remember the first part of our workflow? After we import the data we want to **tidy** the data.
+
+This includes telling `R` what we want it to do with missing data, changing variable classes (for example from `numeric` to `factor`), making variable names more useful or filtering data out that we do not need.
+
+
+One problem we have is several records do not actually contain measurements. This is because many seedlings were never planted (`group` 2 intended for planting at a later date) and instead an **NA** was placed as a value in the dataset. Let's fix this by removing all observations that were never planted (`group`2) using the `filter` function in `dplyr`
+
+```{r}
+#filter out all unplanted records
+wwp2 <- filter(wwp, !group %in% c('2'))
+```
+
+
+Now we can use the `select` feature to keep or drop variables. Because right now we are only interested in `population`, `family` and `d13c` we'll drop `group` and `block` 
+
+*In this case it will be easier to drop the unwanted variables instead of keeping the relevant ones. This can be done by placing a `-` in front of the variable name*
+
+```{r}
+#keep only variables that are interesting for this analysis
+wwp2 <- select(wwp2, -group, -plot, -block)
+```
+
+
+### Renaming
+
+now that the data is a little bit more tidy we can clean up the variable names.
+This is done using `rename`
+
+```{r}
+wwp2 <- rename(wwp2, Pop = population, fam = family)
+```
+
+### Using `mutate` to create a new column
+
+Sometimes we need to create new columns based on analysis or summary data from current columns. `dplyr` has the `mutate` function that allows us to do this.
+For example, if we want to create a new column that has a binary variable (categorical) if $\delta$^13^*C* is less than -30 using `mutate`.
+
+```{r}
+wwp2.d13c <- mutate(wwp2, low.d13c = ifelse(d13c <= -30.00, 1, 0))
+
+```
+
+This is interesting, but because each seedling is an open pollinated member of a family (seed source) growing in a progeny array in our common gardens it may be more useful to know the mean $\delta$^13^*C* by either family or population. 
+
+Use `group_by` to group observations together; we'll `group_by` `fam`. `fam` is the identifier of the seed source tree where seeds were collected from. 
+
+```{r}
+wwp.fam <- group_by(wwp2.d13c, fam)
+wwp.fam
+```
+
+Now the data is all still there but you will notice that a grouping variable is included.
+
+What we really want is to summarize $\delta$^13^*C* by population using `summarize`
+
+```{r}
+wwp.fam.mean <- summarize(wwp.fam, count = n(), mean.d13c = mean(d13c, na.rm = TRUE))
+
+wwp.fam.mean
+```
+
+### combining the $\delta$^13^*C* dataset with *environmental* data
+
+Now that we have mean $\delta$^13^*C* for 157 families of *P. monticola* we want to see if there is any relationship with environmental factors. Luckily we have a dataset that has the environmental data and we need to import it into `R`
+
+```{r}
+wwp.env <- read.csv("WWP_environmental_data.csv", header = TRUE)
+
+```
+
+Again, let's check the data using `str()`, `head()`, and `summary()`
+
+It looks good. For the sake of consistency let's also `rename` `family` to `fam` to match our phenotype data and generate our `key attribute`.
+
+```{r}
+wwp.env <- rename(wwp.env, fam = family)
+```
+
+now lets add our mean $\delta$^13^*C*
+
+```{r}
+wwp.d13c.env <- left_join(wwp.env, wwp.fam.mean, by = c('fam'))
+```
+
+double check the new data frame `str()`
+
+Great! We've combined the two data frames and can now look at some of the environmental relationships.
+
+
+### Visualize using `ggplot2`
+
+With our data a bit cleaner we can visualize our mean $\delta$^13^*C* relative to the latitude of our populations. We can also include the best fit line. In this case I'm using a linear model, but other models can be used (and may be more appropriate).
+
+Lets first drop `count` from this dataset and look at the correlations between all variables and plot it as a heat map using `ggcorr`. This is a nice first pass at relationships
+
+```{r}
+#drop count
+wwp.d13c.env <- select(wwp.d13c.env, -count)
+
+```
+
+Now we will plot the `pearson` `pairwise` correlation coefficients using `ggcorr`
+
+```{r}
+#plot correlation and drop population and fam from heat map
+
+ggcorr(wwp.d13c.env[3:12], nbreaks = 5, palette = "RdYlBu", name = expression(rho), label = TRUE, hjust = 0.75, size = 5, layout.exp = 1, legend.position = "right", legend.size = 12) + 
+  theme(legend.title = element_text(size = 14))
+
+# could also use circles - geom = "circle", nbreaks = 5
+```
+
+Our correlation heat map shows that $\delta$^13^*C* is most negatively correlated with **elevation** and most positively correlated with **latitude** (*also tied with August growing degree days*).
+
+Lets plot these relationships using a linear best fit.
+
+```{r}
+#Elevation
+
+wwp.d13c.env %>%
+  ggplot(aes(elev, mean.d13c)) +
+  geom_point(aes(color = population, size = 1.5)) +
+  geom_smooth(method = 'lm', se = T) + 
+  #geom_label(aes(label = population), nudge_y = 1, alpha = 0.5) +
+  labs(
+    title = "Mean d13c in Pinus monticola across an elevation gradiant",
+    subtitle = "colors represent population",
+    caption = "Data from WWP MITRA?"
+  ) +
+    labs(x = "elevation (m)") +
+  labs(y = "mean d13c") +
+  theme_bw() + theme(legend.position = "none")
+  
+```
+
+```{r}
+#Latitude
+
+wwp.d13c.env %>%
+  ggplot(aes(latitude, mean.d13c)) +
+  geom_point(aes(color = population, size = 1.5)) +
+  geom_smooth(method = 'lm', se = T) + 
+  #geom_label(aes(label = population), nudge_y = 1, alpha = 0.5) +
+  labs(
+    title = "Mean d13c in Pinus monticola across latitude (°N)",
+    subtitle = "colors represent population",
+    caption = "Data from WWP MITRA?"
+  ) +
+    labs(x = "Latitude (°N)") +
+  labs(y = "mean d13c") +
+  theme_bw() + theme(legend.position = "none")
+  
+```
+
+It looks like there are relationship between $\delta$^13^*C* and geography. A good indication of *local adaptation* in WWP.
+
+However, let's test to see if these relationships are significant.
+
+### Model
+
+Now that we have explored and visualized our data, we can test the hypothesis that the $\delta$^13^*C* at our common gardens are related to seed source latitude and elevation.
+
+We'll use a linear mixed model to account for population as a random factor and capture some of the nested design from the progeny array.
+
+```{r}
+d13c.lat <- lme(mean.d13c ~ latitude, random =  ~ 1|population, data = wwp.d13c.env)
+
+summary(d13c.lat)
+```
+
+```{r}
+d13c.elev <- lme(mean.d13c ~ elev, random =  ~ 1|population, data = wwp.d13c.env)
+
+summary(d13c.elev)
+```
+
+We have significant models, but only a small portion of variance in $\delta$^13^*C* is explained by latitude or elevation. 
+
+There is much more that can be done. At this point it may be good to output your data as a new data file so that it can be used later.
+
+### Export data as `.txt` file for later
+
+```{r}
+write.table(wwp.d13c.env, "wwp.d13c.env.txt", sep="\t")
+```
+
+## Communicate
+
+At this point maybe new hypothesis have been generated or new experiments need to be conducted. The final step in the workflow is to communicate your results. We generally do this through scientific publications and meetings. The nice thing about Rmarkdown is that it can easily be archived and the data, annotated readable code, and analysis pipeline can be shared freely.
+
+This example is certainly not exhaustive. I hope what you really see is not the analysis, but the potential and utility of using `Rmarkdown` to generate a readable document that allows you to replicate your analysis, pass it on to others, and as I'll show next, collaborate.
