@@ -1,0 +1,96 @@
+---
+title: "Part1:Basic popgen using genomic data"
+author: "Mitra Menon"
+contact: "menonm2@mymail.vcu.edu"
+Date: "31-July-2018"
+output: html_notebook
+---
+
+*We will begin our tutorial by learning how to deal with large genomic datasets. Here, we will conduct some simple analysis such as estimating divergence among populations and population level allele frequency*
+
+The dataset used in this tutorial contains genotype information from 157 maternal trees of *Pinus monticola*. The genotypes here are Single Nucleotide Polymorphisms (SNPs). This is the same dataset which was analysed in the previous session, except now we are looking at maternal genotypes instead of the offspring phenotypes.
+
+
+
+## Install and load the required libraries
+
+```{r}
+packages <- c("data.table", "dplyr", "hierfstat")
+if (length(setdiff(packages, rownames(installed.packages()))) > 0) {
+  install.packages(setdiff(packages, rownames(installed.packages())))  
+}
+sapply(packages, require, character.only = TRUE)
+```
+
+We will be using several custom functions in our tutorial. These are available under the scripts directory in github. Go ahead download it. Now, provide the complete path to functions.R to load these custom functions into your working environment.
+
+*Note: througout the tutorial we are assuming that all the required datasets and functions are in your current working directory.*
+
+```{r}
+source('functions_workshop.R')
+```
+
+#Importing data: 
+Genomic data obtained from NGS techologies are large and typically converted into a text readable format for post-processing stages. Our SNP dataset is a tab delimited file and contains SNP information stored as 0,1,2 and NA. These numbers represent count of the minor allele, such that 0 indicates homozygous major, 1 is heterozygous and 2 is homozygous minor. Let's read this data in and give it a quick look. We will use the `fread` function from the data.table library to facilitate quick reading.
+
+```{r}
+Gdata<-fread("WWP_snps012.txt",sep="\t",header=T,data.table=F)
+dim(Gdata)
+```
+You will notice that our data has a large number of columns (still few compared to most genomic datasets), this is typical of genomic datasets where the SNPs are listed along columns and far exceed the number of indivduals sequenced. Lets look at the first few lines, remember not to open the entire file or it will cause R to hang up!
+
+*At which column does the genotype information begin?*
+
+```{r}
+Gdata[1:10,1:7]
+```
+
+In this dataset, the first two columns indicate the maternal family and the population to which the maternal tree belongs,respectively. 
+
+#PopGen analysis:
+ 1) *Fst: Degree of genetic differentiation. Values range from 0 to 1.*
+ 
+First, we will obtain single locus and multilocus estimates of divergence using functions in hierfstat. Most species violate the assumptions of a strict island model, hence considering the hierachy present in your study is important for assesment of divergence level. Here, the highest level of hierachy is the population ID.If you have a dataset with more levels of hierachy and you would like to know the level of divergence between groups, it is useful to use `varcomp.glob` implemented in hierfstat. We will not run this for the current tutorial due to time constraint.
+
+
+Before we assess divergence (estimated through Fst) we need to convert the data to comply with the format requirments. We will do this using the function `MinorToHierf` provided in the functions.R script.
+There are several ways to estimate Fst,we will use the Weir and Cockerham estimation implemented in the function `wc`.
+```{r}
+formatedGdf<-MinorToHierf(Gdata[ ,3:ncol(Gdata)])
+
+Groups<-data.frame(Gdata$population)
+FSTAT<-wc(cbind(Groups,formatedGdf),diploid=TRUE)
+```
+
+*What are the various outputs from wc? What is the overall level of divergence in your dataset?*
+
+
+We are interesting in identifying candidates under local adaptation that are often represented by high levels of divergence. To get to this, we will store the per locus estimate of Fst as a named numeric vector and order it. This is a rather crude approach and formal assesment of Fst based outlier tests can be conducted using methods like `OutFLANK` implemented within R. 
+*What do high Fst values mean?*  
+```{r}
+fstLoci<-FSTAT$per.loc$FST
+names(fstLoci)<-colnames(Gdata[ ,3:ncol(Gdata)])
+fstLoci<-fstLoci[order(fstLoci,decreasing = TRUE)]
+```
+
+For the final part here, generate a histogram of Fst. *What is the shape of the histogram and why?* 
+
+Subset the data to obtain only the top 10% of loci and write this file out to a directory. We will utilize this in the next tutorial to test how many were true candidates for local adaptation. 
+
+```{r}
+FstTop10<-cbind.data.frame(snp=names(fstLoci[1:16]),fst=unname(fstLoci[1:16]))
+
+```
+
+
+  2) *Allele frequency estimation*
+  
+Next, we will learn how to estimate allele frequency for our dataset. Go up to the begining of the tutorial for a refresher on what the genotypes in the file Gdata represent. 
+I have provided a function called `MAFbyPop` that will do the estimation for you.
+```{r}
+AF<-MAFbyPop(Gdata = Gdata,Group = Gdata$population,n=3)
+```
+
+For the final part of this tutorial, go ahead and save the allele frequency file into your working directory for use in tutorial 2.
+
+
