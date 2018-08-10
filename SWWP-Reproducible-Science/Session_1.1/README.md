@@ -1,0 +1,2 @@
+# Rmarkdown/Tidyverse tutorial
+This tutorial introduces you to the use of the Markdown syntax that is used in workflow management for Rstudio and Git hub. We will work through the basics of Markdown and then apply it to generate a project using western white pine in Rstudio using the functionality of the Tidyverse. In the next session we will discuss version control using Git and will practice the basics of using GitHub to manage projects efficiently.
