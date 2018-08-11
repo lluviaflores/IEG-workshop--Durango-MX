@@ -35,4 +35,4 @@ Open `Rstudio` and run this `code`
 We will be using data collected from western white pine (*Pinus monticola*) and southwestern white pine (*Pinus strobiformis*). All data is available on the [workshop github site](https://github.com/mitramenon/IEG-workshop--Durango-MX)
 
 ### Contact
-If you have any questions please email Jeremy(jeremy.johnson@nau.edu) or Mitra(menonm2@vcu.edu)
+If you have any questions please email Jeremy(jeremy.johnson@nau.edu) or Mitra(menonm2@mymail.vcu.edu)
