@@ -1,0 +1,187 @@
+---
+title: "Genome wide association study (GWAS)"
+author: "Mitra Menon & Andrew Eckert"
+output: html_notebook
+---
+
+#Summary:
+Now that we have looked at simple measures of differentiation such as Fst and have identified certain loci that were in the tails of the Fst distribution, we will test how many of those were true positives by conducting GWAS. 
+
+We will be using the phenotype dataset from the previous session. In the morning session you also noticed that some of the environmental variables are a good predictor of the phenotype. Studies across several systems have demonstrated the influence of both environment and genetic makeup on the observed phenotypic variation. 
+
+
+#The dataset:
+Our phenotypic dataset is obtained from a common garden where seeds from maternal trees were grown under similar environmental conditions. Hence, the variation observed between trees from different maternal trees is likely genetic. 
+
+We will be using the same genetic dataset used in the PopGen tutorial. Remember that the genotypes are given only for maternal trees but the phenotype data is for offsprings from those maternal trees. Hence, a direct comparision can't be made. 
+
+In order to conduct GWAS, we will infer the maternal tree's phenotypic value by fitting a linear mixed model. We will then use these phenotypic estimates to perform an association between genotypes and phenotypes.
+
+Load the requried libraries & the custom functions.
+```{r}
+pkgs<-c("data.table","LEA","lme4","car","MASS")
+source("http://bioconductor.org/biocLite.R")
+biocLite("LEA")
+sapply(pkgs, require, character.only = TRUE)
+```
+
+```{r}
+source("functions_workshop.R")
+```
+
+
+Read input files. Like before, we will be assuming that all files are in the current working directory. 
+
+```{r}
+Gdata<-fread("WWP_snps012.txt",sep = "\t",data.table = F)
+Phe<-read.table("WWP_phenotype_data.txt",sep="\t",header=T)
+```
+
+#PART1: LMM
+
+The phenotype data is relatively small and so we can give it a quick look using the `head` function. You will notice that the Phenotype data has the a family ID repeated 5 times, indicating phenotypes measured for five offsprings from that maternal tree.
+```{r}
+head(Phe)
+Gdata[1:5,1:6]
+```
+
+#Fitting linear models:
+The decision of fixed and random effects varies depending on your study design and your objective. Since our objective is to conduct GWAS we will treat family and population as random effects. If you had several common gardens but were not interested in the effect of the garden, you could treat garden as a fixed effect in your model. Likewise we are not interested in micro-environmental varition so we treat block as a fixed effect.
+
+a) Model1: Fixed effect model (block as fixed)
+b) Model2: Fixed and random effect model (family as random).
+c) Model3: Fixed and random effect model, where the random effect term is nested (family within population).
+
+Our linear models will be fit using the function `lmer`.
+
+```{r}
+mod1 <- lm(Phe$d13c ~ 1 + Phe$block)
+mod2<-lmer(d13c ~ 1 + (1|family) + block, data= Phe, REML = F)
+mod3<-lmer(d13c ~ 1 +(1|population/family) + block, data = Phe, REML= F)
+```
+
+We will now assess model fits using the function `Anova` and conduct model comparisions using Akaike Information Criterion (AIC).The model with the lowest AIC score is considered the best model. 
+
+*Are the models significant? What is the best fit model?*
+```{r}
+#Anova(mod1,type="III",test.statistic="F")
+anova(mod1)
+```
+```{r}
+aic_vals <- c(AIC(mod1), AIC(mod2), AIC(mod3))
+names(aic_vals) <- c("mod1","mod2","mod3")
+```
+
+In addition to AIC, we will also determine the relative support for the best fit model using AIC weights. We will use the custom function `aic_weights` to do this.
+
+*Which model has the highest relative support and by how much?*
+```{r}
+aic_out <- aic_weights(aic_vals)
+```
+
+Great! We now have our best fit model to pull out the estimated phenotypic values (often called breeding values) for each maternal tree. 
+We will use the `ranef` function to get the effects due to family and population. The number of elements in the output of `ranef` will be equal to the number of random effects in your model. Now its easy to see why it is important to decide what terms you would like to treat as random effects in your model.
+
+```{r}
+mod3_reff<-ranef(mod3)
+```
+*What is the data structure of mod_reff? You can determine this by using the function `str`.*
+
+The values given by the `ranef` function are scaled relative to the global intercept of the model.Thus, to get to the actual maternal phenotypic value we will have to add the global intercept to the random effect values.
+```{r}
+Gintercept<-mod3@beta[1]
+Fam_Reff<- mod3_reff$family + Gintercept
+```
+
+`Fam_Reff` only captures the effect due to the variation among families. Remember that our model includes a nested term (population/family). In order to get to the final step we will add the population effect estimates to the `Fam_Reff` estimates. However, the number of rows are different here due to the nested nature of the design and we have to replicate the population effect value for each maternal tree belonging to the population.
+We will do this by using the custom script `pop_rep`.
+
+```{r}
+BV<- Fam_Reff + pop_rep(pop.eff =mod3_reff$population, n.fam =nrow(mod3_reff$family), fam.eff = mod3_reff$family)
+colnames(BV)<-"dC13"
+```
+
+For the next and the final part, you will need to write out the file BV to your current directory. Lable it as "MaternalPh.txt".
+```{r}
+write.table(BV,file="MaternalPh.env",sep="\t",row.names = F,quote=F,col.names = F)
+```
+
+
+
+
+#PART2: Conducting GWAS
+
+With large genomic datasets it is often assumed that most of the SNP markers do not influence fitness related traits and hence are unlikely to vary along environmental axis. This assumption is key to several approaches used to identify adaptive loci and hence should be tested and explicitly accounted for in our models. Thankfully, this idea can be easily implemented through the correction of background population strucutre for most association approaches. 
+For the ease of understanding the approach we will use linear models to regress out the effect of population structure on the maternal phenotypic values (estimated above). The residuals will then be used as the response variable to conduct single snp based GWAS.
+There are several advanced ways of conducting GWAS using methods such as SNPassoc, GAPIT, bGWAS, GEMMA, TASSEL. However, the basic idea is the same and detailed below.
+
+Let's load the required datasets and make sure that the IDs are in the same order. You can use the `match` function to do this easily. Here, our dataset is already ordered similarly. 
+```{r}
+phenoytpe<-read.table("MaternalPh.env")
+snps<-read.table("WWP_snps012.txt",sep="\t",header=T)
+snps<-snps[ ,-c(1,2)]
+```
+
+To control for population structure we will conduct PCA and determine the number of PC axes that best explain the variance in the dataset. There are several ways to do this. We can use the function `pca` within LEA or `prcomp`or `snpgdsPCA` within Bioconductor to do this. 
+
+```{r}
+write.table(snps,file="test.lfmm",sep="\t",row.names = F,quote=F,col.names = F)
+PCAout<-pca("test.lfmm",scale = TRUE,center = TRUE)
+summary(PCAout)
+```
+Now look at the output from running the PCA under the *Importance of components* section. Using the number of axes needed to explain 90% of the variance in the dataset you can make some educated guess about how many axes should be retained to explain the structure in our dataset. 
+
+Assign the number of PC axis you decided to retain to `PCnum`
+```{r}
+PCnum= 
+PCs<-read.table("test.pca/test.eigenvectors",sep=" ")
+PCs_axis<-PCs[ ,1:PCnum]
+```
+
+# a) Controlling for confounders:
+To refine our guess further, we will fit a linear model with the desired number of PC axis and conduct backward variable selection to retain only the number of axis that improve our model fit. Our variable selection will be done based on AIC value. There are several other ways to achieve the same.
+
+```{r}
+DF<-cbind(d13=phenoytpe$V1,PCs_axis)
+
+#replace your x variables with the column names in DF
+fit <- lm(d13 ~ V1+V2+V3,data = DF)
+step <- stepAIC(fit, direction="backward")
+
+```
+*How many PC axis did you retain?*
+
+Let's extract the residuals of the phenotypes from the best model (The x term should be the variable you decided to retain in the previous step). 
+The object `resd13` holds the values of dC13 after adjusting for the background population structure. 
+```{r}
+fitUpdate <- lm(d13 ~ V1,data = DF)
+resd13<-fitUpdate$residuals
+```
+
+#b) Using lm to conduct single SNP association test and estimate p value and effect size
+
+Using the residuals for dC13 obtained above we will now fit a linear model with dC13 as the response and each SNP as the predictor. From each model, we will then estimate the effect size of the SNP and its importance in the model (assesed by the p value).
+To do this we will use the function `GWAS`. It is a very simple R script, if you are curious you can look over the details in functions_workshop.R.
+```{r}
+GWAS_fit<-GWAS(trait = resd13,snps = snps)
+```
+
+
+Since we are conducting multiple tests we have to perform a test to adjust our p value. We will use the Benjamini & Hochberg method implemented in the function `p.adjust` and use a cutoff of 0.05 or 0.1 to identify candidate loci associtated with dC13 phenotype.
+
+```{r}
+GWAS_out<-p.adjust(p = GWAS_fit$pval,method = "BH")
+GWAS_out<-cbind(GWAS_fit,BH=GWAS_out)
+```
+*How many candidate SNPs did you identify that were associated with dC13? *
+
+#For a little bit extra:
+We will now test how many of these outlier SNPs were also identified as Fst outliers and how many were not. Load the file you had saved in the previous session. We can use the `merge` function to do this.
+
+```{r}
+Fst<-read.table("Fsttop10.txt",header=T,sep="\t")
+
+sharedSNPs<-GWAS_out[GWAS_out$snp%in%Fst$snp, ]
+```
+
+*What would these shared outliers mean? What about SNPs that were not identified as outliers for Fst but were candidates in GWAS? And finally, what would you infer about the SNPs that were Fst outliers but were not identified candidates associated with dC13 (Hint: examine their effect size)?*

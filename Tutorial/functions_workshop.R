@@ -127,3 +127,18 @@ pop_rep <- function(pop.eff, n.fam, fam.eff) {
   
 }
 
+##Function for gwas
+GWAS<-function(trait,snps){
+  #assumes that genotype information is stored in snps and starts at column 1
+ outputs<-matrix(nrow=ncol(snps),ncol=2)
+ colnames(outputs)<-c("ES","pval")
+ 
+  mod<-apply(snps,2,function(X) return(lm(trait ~ 1 + X)))
+  
+  for (i in 1:length(mod)){
+    outputs[i,1]<-mod[[i]]$coefficients[2]
+    outputs[i,2]<-anova(mod[[i]])[1,5]
+  }
+  
+  return(cbind.data.frame(snp=colnames(snps),outputs))
+}
